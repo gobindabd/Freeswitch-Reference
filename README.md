@@ -1,48 +1,38 @@
-# FreeSWITCH Installation on Debian 11/12 (with mod_spandsp and Admin Token Setup)
+# FreeSWITCH Installation on Debian 11/12 (SignalWire Repo, mod_spandsp Patch)
 
-This README provides a complete, step-by-step guide for building and installing FreeSWITCH from source on **Debian 11 or Debian 12**—including fax/TDD support via `mod_spandsp` (with a patch), and instructions for admin token (CLI authentication) collection and usage.
+This README describes how to build and install FreeSWITCH on Debian 11/12 using the official SignalWire repository and manual mod_spandsp patching, as well as all necessary dependencies, build steps, and secure admin setup.
 
 ---
 
 ## Table of Contents
 
 - [About](#about)
-- [Features](#features)
 - [Included Services](#included-services)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation Steps](#installation-steps)
-  - [Patching mod_spandsp](#patching-mod_spandsp)
-  - [Admin Token Collection](#admin-token-collection)
+- [Installation Steps](#installation-steps)
+  - [Set Up the Token](#set-up-the-token)
+  - [Install Dependencies](#install-dependencies)
+  - [Configure SignalWire Repository](#configure-signalwire-repository)
+  - [Install Build Dependencies](#install-build-dependencies)
+  - [Download and Build FreeSWITCH](#download-and-build-freeswitch)
+  - [Patch mod_spandsp](#patch-mod_spandsp)
+- [Systemd Service Example](#systemd-service-example)
+- [Admin Token Setup](#admin-token-setup)
 - [Usage](#usage)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
-- [Acknowledgments](#acknowledgments)
 
 ---
 
 ## About
 
-This guide is built to help you compile and run FreeSWITCH (v1.10 or compatible) on modern Debian servers with full fax/TDD (mod_spandsp) support and secure CLI access.
-
----
-
-## Features
-
-- Complete FreeSWITCH build for Debian 11/12
-- mod_spandsp fax/TDD support (patched for current Debian spandsp libraries)
-- Admin token setup and usage for secure CLI
-- Easy, reproducible steps
+This guide automates most of the modern FreeSWITCH installation process, combining the official SignalWire apt repository for binaries and dependencies with a manual source build and patch for the mod_spandsp fax module (required on Debian 11/12).
 
 ---
 
 ## Included Services
 
-This build includes:
-
-- Core FreeSWITCH engine
+- Core FreeSWITCH switching engine
 - SIP endpoint (`mod_sofia`)
 - Conference bridge (`mod_conference`)
 - Voicemail (`mod_voicemail`)
@@ -50,177 +40,156 @@ This build includes:
 - IVR/dialplan tools (`mod_dptools`, `mod_expr`)
 - Call recording/playback (`mod_recording`, `mod_playback`)
 - Music on Hold (`mod_moh`)
-- And more—customizable via `modules.conf`
+- Customizable via `modules.conf` when building from source
 
 ---
 
-## Getting Started
+## Installation Steps
 
-### Prerequisites
+### Set Up the Token
 
-- Debian 11 or 12 (fresh is best)
-- Root or sudo privileges
-- Internet access
+Set your SignalWire token as an environment variable (**replace with your own for security!**):
 
----
+```bash
+TOKEN=pat_LENXXXXXXXXXXXXXXXXXXXXXXX
+```
 
-### Installation Steps
-
-#### 1. Update System and Install Dependencies
+### Install Dependencies
 
 ```bash
 apt-get update
 apt-get upgrade -y
-apt-get install -y git build-essential autoconf automake libtool pkg-config libncurses5-dev libssl-dev libxml2-dev libsqlite3-dev libcurl4-openssl-dev libpcre3-dev uuid-dev zlib1g-dev libjpeg-dev libspandsp-dev libedit-dev yasm
+apt-get install -y -yq gnupg2 wget lsb-release git build-essential autoconf automake libtool pkg-config \
+libncurses5-dev libssl-dev libxml2-dev libsqlite3-dev libcurl4-openssl-dev \
+libpcre3-dev uuid-dev zlib1g-dev libjpeg-dev libspandsp-dev libedit-dev yasm
 ```
 
----
-
-#### 2. Download FreeSWITCH Source
+### Configure SignalWire Repository
 
 ```bash
-cd /usr/src
-git clone https://github.com/signalwire/freeswitch.git -b v1.10 --depth 1
+wget --http-user=signalwire --http-password=$TOKEN -O /usr/share/keyrings/signalwire-freeswitch-repo.gpg https://freeswitch.signalwire.com/repo/deb/debian-release/signalwire-freeswitch-repo.gpg
+
+echo "machine freeswitch.signalwire.com login signalwire password $TOKEN" > /etc/apt/auth.conf
+chmod 600 /etc/apt/auth.conf
+
+echo "deb [signed-by=/usr/share/keyrings/signalwire-freeswitch-repo.gpg] https://freeswitch.signalwire.com/repo/deb/debian-release/ `lsb_release -sc` main" > /etc/apt/sources.list.d/freeswitch.list
+
+apt-get -yq update
+```
+
+### Install Build Dependencies
+
+```bash
+apt-get -yq build-dep freeswitch
+```
+
+### Download and Build FreeSWITCH
+
+```bash
+cd /usr/src/
+git clone https://github.com/signalwire/freeswitch.git -bv1.10 freeswitch
 cd freeswitch
-```
-
----
-
-#### 3. Bootstrap and Configure
-
-```bash
-./bootstrap.sh
-./configure
-```
-
----
-
-### Patching mod_spandsp
-
-The Debian spandsp package is not API-compatible with upstream FreeSWITCH.  
-Patch the module as below **before building**:
-
-1. **Edit the module source:**
-
-   ```bash
-   vim /usr/src/freeswitch/src/mod/applications/mod_spandsp/mod_spandsp_dsp.c
-   ```
-
-2. **Replace missing constants and fix v18_init arguments:**
-
-   - Change any line like:
-     ```c
-     int r = V18_MODE_5BIT_4545;
-     ```
-     to:
-     ```c
-     int r = 0;
-     ```
-   - Change any line like:
-     ```c
-     r = V18_MODE_5BIT_50;
-     ```
-     to:
-     ```c
-     r = 0;
-     ```
-   - For each call to `v18_init`, add two `NULL` arguments at the end (make 8 arguments):
-     ```c
-     v18_init(..., ..., ..., ..., ..., ..., NULL, NULL);
-     ```
-     For example, change:
-     ```c
-     v18_init(NULL, TRUE, get_v18_mode(session), V18_AUTOMODING_GLOBAL, put_text_msg, NULL);
-     ```
-     to:
-     ```c
-     v18_init(NULL, TRUE, get_v18_mode(session), V18_AUTOMODING_GLOBAL, put_text_msg, NULL, NULL, NULL);
-     ```
-   - Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X` for nano).
-
----
-
-#### 4. Build and Install FreeSWITCH
-
-```bash
-cd /usr/src/freeswitch
-make clean
-./bootstrap.sh
+git config pull.rebase true
+./bootstrap.sh -j
 ./configure
 make
 make install
-make sounds-install moh-install
 ```
 
 ---
 
-### Admin Token Collection
+### Patch mod_spandsp
 
-FreeSWITCH (1.10+) uses an **admin API token** for fs_cli and remote access.
+```bash
+cd /usr/src/freeswitch/src/mod/applications/mod_spandsp/
+wget https://raw.githubusercontent.com/zenthangplus/ansible-role-fsmrf/9a73a47bfa19a485ddfc10f496bfc2041594f552/files/mod_spandsp_dsp.c.patch
 
-**How to get your admin token:**
+patch -p0 < mod_spandsp_dsp.c.patch
+# When prompted:
+# File to patch: mod_spandsp_dsp.c
 
-1. Find your `vars.xml` file (usually `/usr/local/freeswitch/conf/vars.xml`).
+cd /usr/src/freeswitch
+make clean && ./bootstrap.sh && ./configure
+make && make install
+```
 
-2. Look for the line:
+---
 
-   ```xml
-   <X-PRE-PROCESS cmd="set" data="api_auth_token=YOURTOKENHERE"/>
-   ```
+## Systemd Service Example
 
-   Or after first startup, check `/usr/local/freeswitch/log/freeswitch.log` for:
-   ```
-   Admin API auth token: YOURTOKENHERE
-   ```
+Create `/etc/systemd/system/freeswitch.service`:
 
-3. If not set, generate a random token and add a line in `vars.xml`:
+```ini
+[Service]
+Type=forking
+PIDFile=/usr/local/freeswitch/run/freeswitch.pid
+PermissionsStartOnly=true
+ExecStartPre=/bin/mkdir -p /usr/local/freeswitch/run
+ExecStartPre=/bin/chown freeswitch:daemon /usr/local/freeswitch/run
+ExecStart=/usr/local/freeswitch/bin/freeswitch -ncwait -nonat
+TimeoutSec=45s
+Restart=always
+WorkingDirectory=/usr/local/freeswitch/run
+User=freeswitch
+Group=daemon
+LimitCORE=infinity
+LimitNOFILE=100000
+LimitNPROC=60000
+LimitRTPRIO=infinity
+LimitRTTIME=7000000
+IOSchedulingClass=realtime
+IOSchedulingPriority=2
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=89
+UMask=0007
 
-   ```xml
-   <X-PRE-PROCESS cmd="set" data="api_auth_token=your_very_secure_token"/>
-   ```
+[Install]
+WantedBy=multi-user.target
+```
 
-4. Restart FreeSWITCH after changing the token.
+Enable and start the service:
+
+```bash
+systemctl daemon-reload
+systemctl start freeswitch
+systemctl enable freeswitch
+```
+
+---
+
+## Admin Token Setup
+
+**After first start**, check `/usr/local/freeswitch/conf/vars.xml` or `/usr/local/freeswitch/log/freeswitch.log` for your admin API token, or set it manually in `vars.xml` like:
+
+```xml
+<X-PRE-PROCESS cmd="set" data="api_auth_token=YOURTOKEN"/>
+```
+
+Restart FreeSWITCH after changing.
 
 ---
 
 ## Usage
 
-**Starting FreeSWITCH:**
-
-```bash
-/usr/local/freeswitch/bin/freeswitch -nc
-```
-
-**Connecting with fs_cli:**
-
-```bash
-fs_cli -a your_very_secure_token
-```
-
-**To load mod_spandsp (if not loaded automatically):**
-
-```bash
-fs_cli -x "load mod_spandsp"
-```
-
-**Check for the module:**
-
-```bash
-ls /usr/local/freeswitch/mod/ | grep spandsp
-```
+- Start FreeSWITCH (if not using systemd):  
+  `/usr/local/freeswitch/bin/freeswitch -nc`
+- CLI Access:  
+  `fs_cli -a YOURTOKEN`
+- Load mod_spandsp:  
+  `fs_cli -x "load mod_spandsp"`
 
 ---
 
 ## Troubleshooting
 
-- If build fails at mod_spandsp, re-check your edits for `mod_spandsp_dsp.c`.
-- If `fs_cli` rejects your token, check for spaces/typos or restart FreeSWITCH after changing the token.
-- If you don’t need fax/TDD, comment out `applications/mod_spandsp` in `modules.conf`.
+- If patching `mod_spandsp` fails, ensure you specify `mod_spandsp_dsp.c` when prompted.
+- If `fs_cli` authentication fails, check/restart after updating your token.
+- For missing dependencies, rerun `apt-get build-dep freeswitch`.
 
 ---
+
 ## Contact
 
-Maintained by: **Gobinda Paul**  
+Maintained by: **Gobinda Paul**
 Email: gobinda@live.com
 
----
