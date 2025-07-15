@@ -1,0 +1,12 @@
+#/etc/fail2ban/jail.d/freeswitch.local
+[freeswitch]
+enabled  = true
+port     = 5060,5061,5080,5081   # match your SIP/WS ports
+protocol = udp
+filter   = freeswitch
+logpath  = /usr/local/freeswitch/log/freeswitch.log
+maxretry = 5
+findtime = 600
+bantime  = 86400
+mode     = extra
+ignoreip = 127.0.0.1/8 192.168.0.0/16 10.0.0.0/8  118.179.189.66/32
